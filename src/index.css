@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -22,7 +22,7 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
 
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: 'DM Mono', monospace;
 
   --font-heading: var(--font-sans);
 
