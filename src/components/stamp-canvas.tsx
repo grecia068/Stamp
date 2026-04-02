@@ -167,7 +167,7 @@ interface StampCanvasProps {
   activeTool: "select" | "shapes"
   selectedShapeId: string
   inkColor: string
-  svgRef?: React.RefObject<SVGSVGElement>
+  svgRef?: React.RefObject<SVGSVGElement | null>
 }
 
 export function StampCanvas({
@@ -214,7 +214,7 @@ export function StampCanvas({
   }, [contextMenu])
 
   // Combined keyboard handler — registered once, reads latest state via refs
-  const keyCallbackRef = useRef<(e: KeyboardEvent) => void>()
+  const keyCallbackRef = useRef<(e: KeyboardEvent) => void>(undefined)
   keyCallbackRef.current = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return

@@ -34,7 +34,7 @@ function App() {
   const [titleDraft, setTitleDraft] = useState(title)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
-  const svgRef = useRef<SVGSVGElement>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const shortcutsPanelRef = useRef<HTMLDivElement>(null)
 
