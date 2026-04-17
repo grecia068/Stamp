@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback } from "react"
-import { Pipette } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // --- Color math ---
@@ -235,11 +234,6 @@ export function ColorPicker({
 
       {/* Inputs row */}
       <div className="flex items-center gap-2">
-        {/* Eyedropper */}
-        <button className="flex-none text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted cursor-pointer">
-          <Pipette className="h-4 w-4" />
-        </button>
-
         {/* Hex input */}
         <div className="flex items-center gap-1 flex-1 min-w-0 bg-muted rounded-md px-2 py-1">
           <span className="text-xs text-muted-foreground font-mono">#</span>
@@ -298,9 +292,13 @@ export function ColorPicker({
               <button
                 key={i}
                 title={c}
-                className="w-6 h-6 rounded-full border border-foreground/10 cursor-pointer hover:scale-110 transition-transform flex-none"
+                className="w-6 h-6 rounded-full border border-foreground/10 cursor-pointer hover:scale-110 hover:ring-2 hover:ring-zinc-400 hover:ring-offset-1 transition-all flex-none"
                 style={{ backgroundColor: c }}
-                onClick={() => {
+                onMouseDown={(e) => {
+                  // Handle on mousedown (not click) so the action fires before
+                  // Base UI's dismiss handler can close the popup.
+                  e.stopPropagation()
+                  e.preventDefault()
                   const rgb = parseHex(c)
                   if (!rgb) return
                   const [nr, ng, nb] = rgb

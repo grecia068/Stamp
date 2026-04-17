@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { TooltipProvider } from "@/components/ui/tooltip"
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Toolbar } from "@/components/toolbar"
 import { StampCanvas } from "@/components/stamp-canvas"
 import { ShortcutsPanel } from "@/components/shortcuts-panel"
@@ -24,9 +24,10 @@ async function toBase64(url: string): Promise<string> {
 
 function App() {
   const [activeTool, setActiveTool] = useState<"select" | "shapes">("select")
-  const [selectedShapeId, setSelectedShapeId] = useState("square")
+  const [selectedShapeId, setSelectedShapeId] = useState("tile6-new")
   const [inkColor, setInkColor] = useState("#5B8BD9")
   const [inkOpacity, setInkOpacity] = useState(100)
+  const [recolorVersion, setRecolorVersion] = useState(0)
   const [shapesOpen, setShapesOpen] = useState(false)
   const [colorOpen, setColorOpen] = useState(false)
   const [title, setTitle] = useState("Untitled master piece")
@@ -173,6 +174,8 @@ function App() {
           activeTool={activeTool}
           selectedShapeId={selectedShapeId}
           inkColor={inkColor}
+          inkOpacity={inkOpacity}
+          recolorVersion={recolorVersion}
           svgRef={svgRef}
         />
 
@@ -187,6 +190,7 @@ function App() {
           onColorChange={(hex, opacity) => {
             setInkColor(hex)
             setInkOpacity(opacity)
+            setRecolorVersion((v) => v + 1)
           }}
           shapesOpen={shapesOpen}
           onShapesOpenChange={setShapesOpen}
@@ -266,27 +270,32 @@ function App() {
         {/* Shortcuts panel + ? button — bottom right */}
         <div ref={shortcutsPanelRef} className="absolute bottom-6 right-6 flex flex-col items-end gap-2">
           {showShortcuts && <ShortcutsPanel />}
-          <button
-            onClick={() => setShowShortcuts((o) => !o)}
-            style={{
-              width: 32,
-              height: 32,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontFamily: "inherit",
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#18181b",
-              background: "#ffffff",
-              border: "1px solid #e4e4e7",
-              borderRadius: 8,
-              cursor: "pointer",
-              boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
-            }}
-          >
-            ?
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowShortcuts((o) => !o)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "inherit",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: "#18181b",
+                  background: "#ffffff",
+                  border: "1px solid #e4e4e7",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
+                }}
+              >
+                ?
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left">Shortcuts</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </TooltipProvider>
