@@ -65,6 +65,8 @@ export function ShortcutsPanel() {
           { label: "Undo last action", hint: "Cmd + Z" },
           { label: "Redo", hint: "Cmd + Shift + Z" },
           { label: "Select all", hint: "Cmd + A" },
+          { label: "Copy", hint: "Cmd + C" },
+          { label: "Paste", hint: "Cmd + V" },
         ]}
       />
       <Separator />

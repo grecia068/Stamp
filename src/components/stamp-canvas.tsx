@@ -115,13 +115,15 @@ function PlacedStamp({ stamp, shape, isSelected, cursor }: {
           style={{ pointerEvents: "none" }}
         />
       )}
-      <image
-        href={shape.textureUrl}
-        x={stamp.x} y={stamp.y}
-        width={shape.pxW} height={shape.pxH}
-        filter={`url(#${filterId(stamp.color)})`}
-        opacity={(stamp.opacity ?? 100) / 100}
-      />
+      <svg x={stamp.x} y={stamp.y} width={shape.pxW} height={shape.pxH} overflow="hidden">
+        <image
+          href={shape.textureUrl}
+          x={0} y={0}
+          width={shape.pxW} height={shape.pxH}
+          filter={`url(#${filterId(stamp.color)})`}
+          opacity={(stamp.opacity ?? 100) / 100}
+        />
+      </svg>
     </g>
   )
 }
@@ -181,6 +183,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const containerRef       = useRef<HTMLDivElement>(null)
   const dragRef            = useRef<DragState | null>(null)
   const rubberBandRef      = useRef<RubberBandStart | null>(null)
+  const clipboardRef       = useRef<Stamp[]>([])
   // Captures the stamps snapshot once per color-picker session so undo gets
   // one history entry per interaction, not one per mouse-move frame.
   const recolorSnapshotRef = useRef<Stamp[] | null>(null)
@@ -263,6 +266,26 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       setPast((p) => [...p, curStamps])
       setFuture((prev) => prev.slice(1))
       setStamps(f[0])
+      return
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "c") {
+      if (tool !== "select" || sel.size === 0) return
+      e.preventDefault()
+      clipboardRef.current = curStamps.filter((s) => sel.has(s.id))
+      return
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "v") {
+      e.preventDefault()
+      if (clipboardRef.current.length === 0) return
+      const newStamps = clipboardRef.current.map((s, i) => ({
+        ...s,
+        id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
+        x: s.x + SNAP,
+        y: s.y + SNAP,
+      }))
+      setPast((p) => [...p, curStamps]); setFuture([])
+      setStamps((prev) => [...prev, ...newStamps])
+      setSelectedIds(new Set(newStamps.map((s) => s.id)))
       return
     }
     if (e.key === "Escape") {
