@@ -271,28 +271,26 @@ function App() {
         <div ref={shortcutsPanelRef} className="absolute bottom-6 right-6 flex flex-col items-end gap-2">
           {showShortcuts && <ShortcutsPanel />}
           <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowShortcuts((o) => !o)}
-                style={{
-                  width: 32,
-                  height: 32,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "inherit",
-                  fontSize: 14,
-                  fontWeight: 500,
-                  color: "#18181b",
-                  background: "#ffffff",
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
-                }}
-              >
-                ?
-              </button>
+            <TooltipTrigger
+              onClick={() => setShowShortcuts((o) => !o)}
+              style={{
+                width: 32,
+                height: 32,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontFamily: "inherit",
+                fontSize: 14,
+                fontWeight: 500,
+                color: "#18181b",
+                background: "#ffffff",
+                border: "1px solid #e4e4e7",
+                borderRadius: 8,
+                cursor: "pointer",
+                boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
+              }}
+            >
+              ?
             </TooltipTrigger>
             <TooltipContent side="left">Shortcuts</TooltipContent>
           </Tooltip>
