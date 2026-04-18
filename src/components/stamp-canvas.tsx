@@ -1,53 +1,47 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react"
-import { TILE_SHAPES } from "./tile-shapes"
+import { TILE_SHAPE_MAP, TILE_SHAPES } from "./tile-shapes"
 import type { TileShape } from "./tile-shapes"
 import { StampContextMenu } from "./stamp-context-menu"
 
 // ---------------------------------------------------------------------------
-// Grid constant — single source of truth for all snapping
+// Grid constant
 // ---------------------------------------------------------------------------
 
 const SNAP = 58
 
 // ---------------------------------------------------------------------------
-// Style constants — defined outside so object identity is stable across renders
+// Style constants
 // ---------------------------------------------------------------------------
 
-const SVG_OVERFLOW_STYLE: React.CSSProperties = { overflow: "visible" }
-const NO_POINTER_EVENTS: React.CSSProperties  = { pointerEvents: "none" }
+const OVERLAY_STYLE: React.CSSProperties = { display: "block", pointerEvents: "none" }
+const MAIN_STYLE:    React.CSSProperties = { display: "block" }
 
 // ---------------------------------------------------------------------------
-// Color remap — maps #538FDF → any ink color, preserves white grain
+// Color remap — pixel-level equivalent of the SVG feColorMatrix
+// Maps #538FDF → target ink color, preserves white grain highlights
 // ---------------------------------------------------------------------------
 
-function recolorMatrix(hex: string): string {
+function recolorPixels(data: Uint8ClampedArray, hex: string): void {
   const r = parseInt(hex.slice(1, 3), 16) / 255
   const g = parseInt(hex.slice(3, 5), 16) / 255
   const b = parseInt(hex.slice(5, 7), 16) / 255
-  const L_BASE = 0.5247
-  const RANGE  = 1 - L_BASE
-  const SCALE  = 1 + L_BASE / RANGE
+  const L_BASE = 0.5247, RANGE = 1 - L_BASE, SCALE = 1 + L_BASE / RANGE
   const kr = (1 - r) / RANGE, kg = (1 - g) / RANGE, kb = (1 - b) / RANGE
   const cr = SCALE * r - (SCALE - 1)
   const cg = SCALE * g - (SCALE - 1)
   const cb = SCALE * b - (SCALE - 1)
-  const [wR, wG, wB] = [0.3, 0.59, 0.11]
-  const row = (k: number, c: number) =>
-    [wR * k, wG * k, wB * k, 0, c].map((v) => v.toFixed(5)).join(" ")
-  return `${row(kr, cr)} ${row(kg, cg)} ${row(kb, cb)} 0 0 0 1 0`
-}
-
-function filterId(hex: string) {
-  return `rc-${hex.replace("#", "")}`
+  const wR = 0.3, wG = 0.59, wB = 0.11
+  for (let i = 0; i < data.length; i += 4) {
+    const pr = data[i] / 255, pg = data[i + 1] / 255, pb = data[i + 2] / 255
+    data[i]     = Math.max(0, Math.min(255, (kr * wR * pr + kr * wG * pg + kr * wB * pb + cr) * 255)) | 0
+    data[i + 1] = Math.max(0, Math.min(255, (kg * wR * pr + kg * wG * pg + kg * wB * pb + cg) * 255)) | 0
+    data[i + 2] = Math.max(0, Math.min(255, (kb * wR * pr + kb * wG * pg + kb * wB * pb + cb) * 255)) | 0
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
 // ---------------------------------------------------------------------------
-
-function stampIdFromEvent(e: React.MouseEvent): string | null {
-  return (e.target as Element).closest("[data-stamp-id]")?.getAttribute("data-stamp-id") ?? null
-}
 
 function snapPos(x: number, y: number) {
   return { x: Math.round(x / SNAP) * SNAP, y: Math.round(y / SNAP) * SNAP }
@@ -55,6 +49,28 @@ function snapPos(x: number, y: number) {
 
 function isSameCell(a: Stamp, b: Stamp): boolean {
   return a.x === b.x && a.y === b.y
+}
+
+function stampAtPoint(x: number, y: number, stamps: Stamp[]): string | null {
+  for (let i = stamps.length - 1; i >= 0; i--) {
+    const s = stamps[i]
+    const shape = TILE_SHAPE_MAP.get(s.shapeId)
+    if (!shape) continue
+    let px = x, py = y
+    if (s.rotation) {
+      const cx = s.x + shape.pxW / 2
+      const cy = s.y + shape.pxH / 2
+      const rad = (-s.rotation * Math.PI) / 180
+      const cos = Math.cos(rad), sin = Math.sin(rad)
+      const dx = x - cx, dy = y - cy
+      px = cx + dx * cos - dy * sin
+      py = cy + dx * sin + dy * cos
+    }
+    if (px >= s.x && px <= s.x + shape.pxW && py >= s.y && py <= s.y + shape.pxH) {
+      return s.id
+    }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +105,7 @@ interface RubberBandStart {
   screenY: number
   canvasX: number
   canvasY: number
-  additive: boolean // true when Shift was held at mousedown
+  additive: boolean
 }
 
 interface RubberBandRect {
@@ -98,68 +114,6 @@ interface RubberBandRect {
   x2: number
   y2: number
 }
-
-// ---------------------------------------------------------------------------
-// SVG sub-components — memoized so only the changed tile re-renders
-// ---------------------------------------------------------------------------
-
-const PlacedStamp = React.memo(function PlacedStamp({ stamp, shape, isSelected, cursor }: {
-  stamp: Stamp
-  shape: TileShape
-  isSelected: boolean
-  cursor: string
-}) {
-  const cx = stamp.x + shape.pxW / 2
-  const cy = stamp.y + shape.pxH / 2
-  const transform = stamp.rotation ? `rotate(${stamp.rotation} ${cx} ${cy})` : undefined
-  return (
-    <g data-stamp-id={stamp.id} transform={transform} style={{ cursor }}>
-      {isSelected && (
-        <rect
-          x={stamp.x - 2} y={stamp.y - 2}
-          width={shape.pxW + 4} height={shape.pxH + 4}
-          rx={2} fill="rgba(0,131,246,0.31)" stroke="#0083F6" strokeWidth={2}
-          style={NO_POINTER_EVENTS}
-        />
-      )}
-      <svg x={stamp.x} y={stamp.y} width={shape.pxW} height={shape.pxH} overflow="hidden">
-        <image
-          href={shape.textureUrl}
-          x={0} y={0}
-          width={shape.pxW} height={shape.pxH}
-          filter={`url(#${filterId(stamp.color)})`}
-          opacity={(stamp.opacity ?? 100) / 100}
-        />
-      </svg>
-    </g>
-  )
-})
-
-const GhostPreview = React.memo(function GhostPreview({ pos, shape, rotation, inkColor }: {
-  pos: { x: number; y: number }
-  shape: TileShape
-  rotation: number
-  inkColor: string
-}) {
-  const cx = pos.x + shape.pxW / 2
-  const cy = pos.y + shape.pxH / 2
-  return (
-    <g
-      transform={rotation ? `rotate(${rotation} ${cx} ${cy})` : undefined}
-      style={NO_POINTER_EVENTS}
-    >
-      <svg
-        x={pos.x} y={pos.y}
-        width={shape.pxW} height={shape.pxH}
-        viewBox={shape.viewBox}
-        preserveAspectRatio="xMidYMid meet"
-        opacity={0.35} overflow="visible"
-      >
-        {shape.inner(inkColor)}
-      </svg>
-    </g>
-  )
-})
 
 // ---------------------------------------------------------------------------
 // StampCanvas
@@ -171,10 +125,10 @@ interface StampCanvasProps {
   inkColor: string
   inkOpacity: number
   recolorVersion: number
-  svgRef?: React.RefObject<SVGSVGElement | null>
+  canvasRef?: React.RefObject<HTMLCanvasElement | null>
 }
 
-export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity, recolorVersion, svgRef }: StampCanvasProps) {
+export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity, recolorVersion, canvasRef }: StampCanvasProps) {
 
   // ── State ─────────────────────────────────────────────────────────────────
 
@@ -186,6 +140,19 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu]     = useState<ContextMenuState | null>(null)
   const [rubberBand, setRubberBand]       = useState<RubberBandRect | null>(null)
+  const [tilesLoaded, setTilesLoaded]     = useState(false)
+
+  // ── Canvas refs ────────────────────────────────────────────────────────────
+
+  const mainCanvasRef    = useRef<HTMLCanvasElement>(null)
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  // ── Tile image / color caches ──────────────────────────────────────────────
+
+  const tileImgRef     = useRef(new Map<string, HTMLImageElement>())
+  const coloredTileRef = useRef(new Map<string, OffscreenCanvas>())
+
+  // ── Interaction refs ──────────────────────────────────────────────────────
 
   const containerRef       = useRef<HTMLDivElement>(null)
   const dragRef            = useRef<DragState | null>(null)
@@ -193,39 +160,218 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const rubberBandRectRef  = useRef<RubberBandRect | null>(null)
   const clipboardRef       = useRef<Stamp[]>([])
   const rafRef             = useRef<number | null>(null)
-  // Captures the stamps snapshot once per color-picker session so undo gets
-  // one history entry per interaction, not one per mouse-move frame.
   const recolorSnapshotRef = useRef<Stamp[] | null>(null)
 
-  // Mirror refs keep the keyboard handler and useCallback handlers current
-  // without re-registering or re-creating them on every render.
-  const stampsRef           = useRef(stamps)
-  const pastRef             = useRef(past)
-  const futureRef           = useRef(future)
-  const selectedIdsRef      = useRef(selectedIds)
-  const activeToolRef       = useRef(activeTool)
-  const ghostRotationRef    = useRef(ghostRotation)
-  const inkOpacityRef       = useRef(inkOpacity)
-  const inkColorRef         = useRef(inkColor)
-  const selectedShapeIdRef  = useRef(selectedShapeId)
+  // Mirror refs
+  const stampsRef          = useRef(stamps)
+  const pastRef            = useRef(past)
+  const futureRef          = useRef(future)
+  const selectedIdsRef     = useRef(selectedIds)
+  const activeToolRef      = useRef(activeTool)
+  const ghostRotationRef   = useRef(ghostRotation)
+  const ghostPosRef        = useRef(ghostPos)
+  const inkOpacityRef      = useRef(inkOpacity)
+  const inkColorRef        = useRef(inkColor)
+  const selectedShapeIdRef = useRef(selectedShapeId)
   stampsRef.current          = stamps
   pastRef.current            = past
   futureRef.current          = future
   selectedIdsRef.current     = selectedIds
   activeToolRef.current      = activeTool
   ghostRotationRef.current   = ghostRotation
+  ghostPosRef.current        = ghostPos
   inkOpacityRef.current      = inkOpacity
   inkColorRef.current        = inkColor
   selectedShapeIdRef.current = selectedShapeId
 
-  // ── Effects ───────────────────────────────────────────────────────────────
+  // ── Tile image loading ─────────────────────────────────────────────────────
 
-  // Clear selection when switching away from select tool
+  useEffect(() => {
+    let loaded = 0
+    const total = TILE_SHAPES.length
+    TILE_SHAPES.forEach((shape) => {
+      const img = new Image()
+      const done = () => {
+        tileImgRef.current.set(shape.id, img)
+        if (++loaded === total) setTilesLoaded(true)
+      }
+      img.onload  = done
+      img.onerror = done
+      img.src = shape.textureUrl
+    })
+  }, [])
+
+  // ── Colored-tile getter ───────────────────────────────────────────────────
+
+  const getColoredTile = useCallback((shape: TileShape, color: string): OffscreenCanvas | null => {
+    const key = `${shape.id}-${color}`
+    const cache = coloredTileRef.current
+    if (cache.has(key)) return cache.get(key)!
+    const img = tileImgRef.current.get(shape.id)
+    if (!img) return null
+    const oc  = new OffscreenCanvas(shape.pxW, shape.pxH)
+    const ctx = oc.getContext("2d")!
+    ctx.drawImage(img, 0, 0, shape.pxW, shape.pxH)
+    const imageData = ctx.getImageData(0, 0, shape.pxW, shape.pxH)
+    recolorPixels(imageData.data, color)
+    ctx.putImageData(imageData, 0, 0)
+    cache.set(key, oc)
+    return oc
+  }, [])
+
+  // ── Draw callbacks (ref pattern so ResizeObserver can call them stably) ───
+
+  const redrawMainRef = useRef<() => void>(() => {})
+  redrawMainRef.current = () => {
+    const canvas = mainCanvasRef.current
+    if (!canvas || canvas.width === 0) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+    const dpr = window.devicePixelRatio || 1
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+    for (const stamp of stampsRef.current) {
+      const shape = TILE_SHAPE_MAP.get(stamp.shapeId)
+      if (!shape) continue
+      const colored = getColoredTile(shape, stamp.color)
+      if (!colored) continue
+      ctx.save()
+      if (stamp.rotation) {
+        const cx = stamp.x + shape.pxW / 2
+        const cy = stamp.y + shape.pxH / 2
+        ctx.translate(cx, cy)
+        ctx.rotate(stamp.rotation * Math.PI / 180)
+        ctx.translate(-cx, -cy)
+      }
+      ctx.globalAlpha = (stamp.opacity ?? 100) / 100
+      ctx.drawImage(colored, stamp.x, stamp.y, shape.pxW, shape.pxH)
+      ctx.restore()
+    }
+  }
+
+  const redrawOverlayRef = useRef<() => void>(() => {})
+  redrawOverlayRef.current = () => {
+    const canvas = overlayCanvasRef.current
+    if (!canvas || canvas.width === 0) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+    const dpr = window.devicePixelRatio || 1
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+
+    // Selection highlights
+    const sel = selectedIdsRef.current
+    if (sel.size > 0) {
+      ctx.fillStyle   = "rgba(0,131,246,0.31)"
+      ctx.strokeStyle = "#0083F6"
+      ctx.lineWidth   = 2
+      for (const stamp of stampsRef.current) {
+        if (!sel.has(stamp.id)) continue
+        const shape = TILE_SHAPE_MAP.get(stamp.shapeId)
+        if (!shape) continue
+        ctx.save()
+        if (stamp.rotation) {
+          const cx = stamp.x + shape.pxW / 2
+          const cy = stamp.y + shape.pxH / 2
+          ctx.translate(cx, cy)
+          ctx.rotate(stamp.rotation * Math.PI / 180)
+          ctx.translate(-cx, -cy)
+        }
+        ctx.beginPath()
+        ctx.roundRect(stamp.x - 2, stamp.y - 2, shape.pxW + 4, shape.pxH + 4, 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+
+    // Ghost preview
+    const gp = ghostPosRef.current
+    if (activeToolRef.current === "shapes" && gp) {
+      const shape = TILE_SHAPE_MAP.get(selectedShapeIdRef.current)
+      if (shape) {
+        const colored = getColoredTile(shape, inkColorRef.current)
+        if (colored) {
+          const rot = ghostRotationRef.current
+          ctx.save()
+          if (rot) {
+            const cx = gp.x + shape.pxW / 2
+            const cy = gp.y + shape.pxH / 2
+            ctx.translate(cx, cy)
+            ctx.rotate(rot * Math.PI / 180)
+            ctx.translate(-cx, -cy)
+          }
+          ctx.globalAlpha = 0.35
+          ctx.drawImage(colored, gp.x, gp.y, shape.pxW, shape.pxH)
+          ctx.restore()
+        }
+      }
+    }
+
+    // Rubber band selection rect
+    const rb = rubberBandRectRef.current
+    if (rb) {
+      const x = Math.min(rb.x1, rb.x2), y = Math.min(rb.y1, rb.y2)
+      const w = Math.abs(rb.x2 - rb.x1),  h = Math.abs(rb.y2 - rb.y1)
+      ctx.fillStyle   = "rgba(0,131,246,0.1)"
+      ctx.strokeStyle = "#0083F6"
+      ctx.lineWidth   = 1
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 6)
+      ctx.fill()
+      ctx.stroke()
+    }
+  }
+
+  // ── Canvas resize observer ─────────────────────────────────────────────────
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      const w = Math.round(width), h = Math.round(height)
+      const dpr = window.devicePixelRatio || 1
+      const pw = Math.round(w * dpr), ph = Math.round(h * dpr)
+      const main    = mainCanvasRef.current
+      const overlay = overlayCanvasRef.current
+      if (main && (main.width !== pw || main.height !== ph)) {
+        main.width = pw; main.height = ph
+        main.style.width = w + "px"; main.style.height = h + "px"
+      }
+      if (overlay && (overlay.width !== pw || overlay.height !== ph)) {
+        overlay.width = pw; overlay.height = ph
+        overlay.style.width = w + "px"; overlay.style.height = h + "px"
+      }
+      redrawMainRef.current()
+      redrawOverlayRef.current()
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [])
+
+  // ── Forward main canvas to parent for export ───────────────────────────────
+
+  useEffect(() => {
+    if (canvasRef) canvasRef.current = mainCanvasRef.current
+  })
+
+  // ── Redraw triggers ────────────────────────────────────────────────────────
+
+  useEffect(() => { redrawMainRef.current() }, [stamps, tilesLoaded])
+
+  useEffect(() => {
+    redrawOverlayRef.current()
+  }, [stamps, selectedIds, activeTool, ghostPos, ghostRotation, rubberBand, inkColor, selectedShapeId])
+
+  // ── Clear selection when switching away from select tool ───────────────────
+
   useEffect(() => {
     if (activeTool !== "select") { setSelectedIds(new Set()); dragRef.current = null }
   }, [activeTool])
 
-  // Dismiss context menu on any outside mousedown
+  // ── Dismiss context menu on outside mousedown ──────────────────────────────
+
   useEffect(() => {
     if (!contextMenu) return
     const onDown = () => setContextMenu(null)
@@ -233,17 +379,19 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     return () => document.removeEventListener("mousedown", onDown)
   }, [contextMenu])
 
-  // Reset the recolor session when selection changes
+  // ── Reset recolor session when selection changes ───────────────────────────
+
   useEffect(() => { recolorSnapshotRef.current = null }, [selectedIds])
 
-  // Recolor selected tiles live as ink color changes; one undo entry per session
+  // ── Live recolor selected tiles; one undo entry per color-picker session ───
+
   useEffect(() => {
     if (activeToolRef.current !== "select") return
     const sel = selectedIdsRef.current
     if (sel.size === 0) return
     if (recolorSnapshotRef.current === null) {
       recolorSnapshotRef.current = stampsRef.current
-      setPast((p) => [...p, stampsRef.current])
+      setPast((p) => [...p.slice(-49), stampsRef.current])
       setFuture([])
     }
     setStamps((prev) => prev.map((s) =>
@@ -252,12 +400,12 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recolorVersion])
 
-  // Cancel any pending rAF on unmount
+  // ── Cancel pending rAF on unmount ──────────────────────────────────────────
+
   useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current) }, [])
 
-  // ── Keyboard handler ──────────────────────────────────────────────────────
+  // ── Keyboard handler ───────────────────────────────────────────────────────
 
-  // Registered once; always reads current state via mirror refs
   const keyCallbackRef = useRef<(e: KeyboardEvent) => void>(undefined)
   keyCallbackRef.current = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement
@@ -280,7 +428,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       e.preventDefault()
       const f = futureRef.current
       if (!f.length) return
-      setPast((p) => [...p, curStamps])
+      setPast((p) => [...p.slice(-49), curStamps])
       setFuture((prev) => prev.slice(1))
       setStamps(f[0])
       return
@@ -300,7 +448,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         x: s.x + SNAP,
         y: s.y + SNAP,
       }))
-      setPast((p) => [...p, curStamps]); setFuture([])
+      setPast((p) => [...p.slice(-49), curStamps]); setFuture([])
       setStamps((prev) => [...prev, ...newStamps])
       setSelectedIds(new Set(newStamps.map((s) => s.id)))
       return
@@ -323,7 +471,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault()
       recolorSnapshotRef.current = null
-      setPast((p) => [...p, curStamps]); setFuture([])
+      setPast((p) => [...p.slice(-49), curStamps]); setFuture([])
       setStamps((prev) => prev.filter((s) => !sel.has(s.id))); setSelectedIds(new Set()); return
     }
     const deltas: Record<string, [number, number]> = {
@@ -342,9 +490,8 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     return () => window.removeEventListener("keydown", handler)
   }, [])
 
-  // ── Stable callbacks ──────────────────────────────────────────────────────
+  // ── Stable callbacks ───────────────────────────────────────────────────────
 
-  // Snap dragged stamps to the grid on mouse release
   const finalizeDrag = useCallback(() => {
     if (!dragRef.current?.moved) return
     const draggedIds = new Set(dragRef.current.startPositions.keys())
@@ -355,21 +502,20 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     }))
   }, [])
 
-  // Returns IDs of stamps whose bounding box intersects the rubber band rect
   const getHitStamps = useCallback((rb: RubberBandRect): string[] => {
     const left   = Math.min(rb.x1, rb.x2)
     const right  = Math.max(rb.x1, rb.x2)
     const top    = Math.min(rb.y1, rb.y2)
     const bottom = Math.max(rb.y1, rb.y2)
     return stampsRef.current.filter((s) => {
-      const shape = TILE_SHAPES.find((sh) => sh.id === s.shapeId)
+      const shape = TILE_SHAPE_MAP.get(s.shapeId)
       if (!shape) return false
       return s.x < right && s.x + shape.pxW > left &&
              s.y < bottom && s.y + shape.pxH > top
     }).map((s) => s.id)
   }, [])
 
-  // ── Layer order ───────────────────────────────────────────────────────────
+  // ── Layer order ────────────────────────────────────────────────────────────
 
   const bringForward = useCallback((id: string) => {
     recolorSnapshotRef.current = null
@@ -377,7 +523,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const idx = current.findIndex((s) => s.id === id)
     if (idx === -1 || idx === current.length - 1) return
     const next = [...current];[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-    setPast((p) => [...p, current]); setFuture([]); setStamps(next)
+    setPast((p) => [...p.slice(-49), current]); setFuture([]); setStamps(next)
   }, [])
 
   const sendBack = useCallback((id: string) => {
@@ -386,19 +532,24 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const idx = current.findIndex((s) => s.id === id)
     if (idx <= 0) return
     const next = [...current];[next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]
-    setPast((p) => [...p, current]); setFuture([]); setStamps(next)
+    setPast((p) => [...p.slice(-49), current]); setFuture([]); setStamps(next)
   }, [])
 
-  // ── Event handlers ────────────────────────────────────────────────────────
+  // ── Event handlers ─────────────────────────────────────────────────────────
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (activeToolRef.current !== "select") return
     setContextMenu(null)
-    const stampId = stampIdFromEvent(e)
+
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+    const currentStamps   = stampsRef.current
+    const currentSelected = selectedIdsRef.current
+    const stampId = stampAtPoint(cx, cy, currentStamps)
 
     if (stampId) {
-      // ── Clicked on a tile ────────────────────────────────────
-
       if (e.shiftKey) {
         setSelectedIds((prev) => {
           const next = new Set(prev)
@@ -408,12 +559,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         return
       }
 
-      const currentStamps = stampsRef.current
-      const currentSelected = selectedIdsRef.current
       const hit = currentStamps.find((s) => s.id === stampId)
       if (!hit) return
 
-      // Cycle through stacked tiles in the same cell on repeated clicks
       const cellStack = [...currentStamps].reverse().filter((s) => isSameCell(s, hit))
       let targetId = stampId
       if (cellStack.length > 1) {
@@ -422,8 +570,6 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         if (currentIdx !== -1) targetId = cellStack[(currentIdx + 1) % cellStack.length].id
       }
 
-      // Preserve multi-selection when clicking a tile that's already in it;
-      // otherwise select just this tile
       let dragSet: Set<string>
       if (currentSelected.has(targetId) && currentSelected.size > 1) {
         dragSet = currentSelected
@@ -432,7 +578,6 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         dragSet = new Set([targetId])
       }
 
-      // Snap start positions so drag always originates from a clean grid cell
       const startPositions = new Map<string, { x: number; y: number }>()
       for (const id of dragSet) {
         const s = currentStamps.find((st) => st.id === id)
@@ -442,20 +587,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       e.preventDefault()
 
     } else {
-      // ── Clicked on empty canvas — start rubber band ──────────
-
-      const rect = containerRef.current?.getBoundingClientRect()
-      if (rect) {
-        rubberBandRef.current = {
-          screenX: e.clientX, screenY: e.clientY,
-          canvasX: e.clientX - rect.left, canvasY: e.clientY - rect.top,
-          additive: e.shiftKey,
-        }
+      rubberBandRef.current = {
+        screenX: e.clientX, screenY: e.clientY,
+        canvasX: cx, canvasY: cy,
+        additive: e.shiftKey,
       }
     }
   }, [])
 
-  // Throttled via rAF so the canvas updates at most once per animation frame
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const clientX = e.clientX
     const clientY = e.clientY
@@ -466,7 +605,6 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
       if (activeToolRef.current === "select") {
         if (dragRef.current) {
-          // Tile drag: move freely, snap on release
           const dx = clientX - dragRef.current.startMouseX
           const dy = clientY - dragRef.current.startMouseY
           if (!dragRef.current.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) dragRef.current.moved = true
@@ -477,7 +615,6 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
             }))
           }
         } else if (rubberBandRef.current) {
-          // Rubber band: update rect once movement exceeds threshold
           const { screenX, screenY, canvasX, canvasY } = rubberBandRef.current
           if (Math.abs(clientX - screenX) > 2 || Math.abs(clientY - screenY) > 2) {
             const rect = containerRef.current?.getBoundingClientRect()
@@ -505,13 +642,11 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       rubberBandRef.current = null
       const rb = rubberBandRectRef.current
       if (rb) {
-        // Drag occurred: select tiles that intersect the rect
         const hitIds = getHitStamps(rb)
         setSelectedIds((prev) => additive ? new Set([...prev, ...hitIds]) : new Set(hitIds))
         rubberBandRectRef.current = null
         setRubberBand(null)
       } else {
-        // No drag (just a click on empty canvas): deselect all
         setSelectedIds(new Set())
       }
     }
@@ -521,8 +656,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     setGhostPos(null)
     finalizeDrag()
     dragRef.current = null
-    // Cancel any in-progress rubber band and pending rAF
-    rubberBandRef.current = null
+    rubberBandRef.current     = null
     rubberBandRectRef.current = null
     setRubberBand(null)
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
@@ -535,7 +669,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const pos = snapPos(e.clientX - rect.left, e.clientY - rect.top)
     recolorSnapshotRef.current = null
     const current = stampsRef.current
-    setPast((p) => [...p, current]); setFuture([])
+    setPast((p) => [...p.slice(-49), current]); setFuture([])
     setStamps((prev) => [...prev, {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       shapeId: selectedShapeIdRef.current, color: inkColorRef.current, opacity: inkOpacityRef.current,
@@ -545,7 +679,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (activeToolRef.current !== "select") return
-    const stampId = stampIdFromEvent(e)
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const stampId = stampAtPoint(e.clientX - rect.left, e.clientY - rect.top, stampsRef.current)
     if (!stampId) return
     setSelectedIds(new Set([stampId]))
     setStamps((prev) => prev.map((s) => s.id === stampId ? { ...s, rotation: (s.rotation + 90) % 360 } : s))
@@ -554,24 +690,23 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     if (activeToolRef.current !== "select") return
-    const stampId = stampIdFromEvent(e)
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const stampId = stampAtPoint(e.clientX - rect.left, e.clientY - rect.top, stampsRef.current)
     if (!stampId) return
     if (!selectedIdsRef.current.has(stampId)) setSelectedIds(new Set([stampId]))
     setContextMenu({ x: e.clientX, y: e.clientY, stampId })
   }, [])
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
-  const selectedShape  = TILE_SHAPES.find((s) => s.id === selectedShapeId)
-  const uniqueColors   = useMemo(() => [...new Set(stamps.map((s) => s.color))], [stamps])
-  const ctxIdx         = contextMenu ? stamps.findIndex((s) => s.id === contextMenu.stampId) : -1
-  const ctxCanForward  = ctxIdx !== -1 && ctxIdx < stamps.length - 1
-  const ctxCanBack     = ctxIdx > 0
+  const ctxIdx        = contextMenu ? stamps.findIndex((s) => s.id === contextMenu.stampId) : -1
+  const ctxCanForward = ctxIdx !== -1 && ctxIdx < stamps.length - 1
+  const ctxCanBack    = ctxIdx > 0
   const containerStyle = useMemo<React.CSSProperties>(
     () => ({ cursor: activeTool === "shapes" ? "crosshair" : "default" }),
     [activeTool]
   )
-  const stampCursor    = activeTool === "select" ? "move" : "default"
 
   return (
     <div
@@ -583,43 +718,11 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       onClick={handleClick}        onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
     >
-      <svg ref={svgRef} className="absolute inset-0" width="100%" height="100%" style={SVG_OVERFLOW_STYLE}>
-        {/* Per-color recolor filters */}
-        <defs>
-          {uniqueColors.map((hex) => (
-            <filter key={hex} id={filterId(hex)} x="0%" y="0%" width="100%" height="100%" colorInterpolationFilters="sRGB">
-              <feColorMatrix type="matrix" values={recolorMatrix(hex)} />
-            </filter>
-          ))}
-        </defs>
+      {/* Main canvas — placed stamps */}
+      <canvas ref={mainCanvasRef} className="absolute inset-0" style={MAIN_STYLE} />
 
-        {/* Placed stamps */}
-        {stamps.map((stamp) => {
-          const shape = TILE_SHAPES.find((s) => s.id === stamp.shapeId)
-          if (!shape) return null
-          return <PlacedStamp key={stamp.id} stamp={stamp} shape={shape} isSelected={selectedIds.has(stamp.id)} cursor={stampCursor} />
-        })}
-
-        {/* Ghost preview while stamp tool is active */}
-        {activeTool === "shapes" && ghostPos && selectedShape && (
-          <GhostPreview pos={ghostPos} shape={selectedShape} rotation={ghostRotation} inkColor={inkColor} />
-        )}
-
-        {/* Rubber band selection rect */}
-        {rubberBand && (
-          <rect
-            x={Math.min(rubberBand.x1, rubberBand.x2)}
-            y={Math.min(rubberBand.y1, rubberBand.y2)}
-            width={Math.abs(rubberBand.x2 - rubberBand.x1)}
-            height={Math.abs(rubberBand.y2 - rubberBand.y1)}
-            rx={6}
-            fill="rgba(0,131,246,0.1)"
-            stroke="#0083F6"
-            strokeWidth={1}
-            style={NO_POINTER_EVENTS}
-          />
-        )}
-      </svg>
+      {/* Overlay canvas — selection highlights, ghost preview, rubber band */}
+      <canvas ref={overlayCanvasRef} className="absolute inset-0" style={OVERLAY_STYLE} />
 
       {/* Right-click context menu */}
       {contextMenu && ctxIdx !== -1 && (
@@ -632,7 +735,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
             recolorSnapshotRef.current = null
             const toDelete = selectedIdsRef.current.size > 0 ? selectedIdsRef.current : new Set([contextMenu.stampId])
             const current = stampsRef.current
-            setPast((p) => [...p, current]); setFuture([])
+            setPast((p) => [...p.slice(-49), current]); setFuture([])
             setStamps((prev) => prev.filter((s) => !toDelete.has(s.id)))
             setSelectedIds(new Set()); setContextMenu(null)
           }}

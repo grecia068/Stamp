@@ -11,17 +11,6 @@ function isTyping(e: KeyboardEvent) {
   return t.tagName === "INPUT" || t.tagName === "TEXTAREA" || !!t.isContentEditable
 }
 
-async function toBase64(url: string): Promise<string> {
-  const res = await fetch(url)
-  const blob = await res.blob()
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
-
 function App() {
   const [activeTool, setActiveTool] = useState<"select" | "shapes">("select")
   const [selectedShapeId, setSelectedShapeId] = useState("tile6-new")
@@ -35,7 +24,7 @@ function App() {
   const [titleDraft, setTitleDraft] = useState(title)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
-  const svgRef = useRef<SVGSVGElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const shortcutsPanelRef = useRef<HTMLDivElement>(null)
 
@@ -116,54 +105,23 @@ function App() {
     setEditingTitle(false)
   }
 
-  async function handleExport() {
-    const svg = svgRef.current
-    if (!svg) return
-
-    // Clone SVG and inline all image hrefs as base64
-    const clone = svg.cloneNode(true) as SVGSVGElement
-    const images = clone.querySelectorAll("image[href]")
-    await Promise.all(
-      Array.from(images).map(async (img) => {
-        const href = img.getAttribute("href")
-        if (!href || href.startsWith("data:")) return
-        try {
-          const b64 = await toBase64(href)
-          img.setAttribute("href", b64)
-        } catch {
-          // skip images that fail to load
-        }
-      })
-    )
-
-    // Get actual pixel dimensions from the container
-    const rect = svg.getBoundingClientRect()
-    clone.setAttribute("width", String(rect.width))
-    clone.setAttribute("height", String(rect.height))
-
-    const svgStr = new XMLSerializer().serializeToString(clone)
-    const blob = new Blob([svgStr], { type: "image/svg+xml" })
-    const url = URL.createObjectURL(blob)
-
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement("canvas")
-      canvas.width = rect.width
-      canvas.height = rect.height
-      const ctx = canvas.getContext("2d")!
-      ctx.fillStyle = "#ffffff"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
-      canvas.toBlob((pngBlob) => {
-        if (!pngBlob) return
-        const a = document.createElement("a")
-        a.href = URL.createObjectURL(pngBlob)
-        a.download = `${title}.png`
-        a.click()
-      }, "image/png")
-    }
-    img.src = url
+  function handleExport() {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const exportCanvas = document.createElement("canvas")
+    exportCanvas.width = canvas.width
+    exportCanvas.height = canvas.height
+    const ctx = exportCanvas.getContext("2d")!
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
+    ctx.drawImage(canvas, 0, 0)
+    exportCanvas.toBlob((pngBlob) => {
+      if (!pngBlob) return
+      const a = document.createElement("a")
+      a.href = URL.createObjectURL(pngBlob)
+      a.download = `${title}.png`
+      a.click()
+    }, "image/png")
   }
 
   return (
@@ -176,7 +134,7 @@ function App() {
           inkColor={inkColor}
           inkOpacity={inkOpacity}
           recolorVersion={recolorVersion}
-          svgRef={svgRef}
+          canvasRef={canvasRef}
         />
 
         {/* Toolbar */}
