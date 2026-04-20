@@ -87,6 +87,14 @@ interface Stamp {
   rotation: number // 0 | 90 | 180 | 270
 }
 
+type UndoAction =
+  | { type: "add";     stamps:  Stamp[] }
+  | { type: "remove";  entries: { stamp: Stamp; index: number }[] }
+  | { type: "move";    moves:   { id: string; x: number; y: number }[] }
+  | { type: "rotate";  rots:    { id: string; rotation: number }[] }
+  | { type: "recolor"; colors:  { id: string; color: string; opacity: number }[] }
+  | { type: "reorder"; order:   string[] }
+
 interface DragState {
   startMouseX: number
   startMouseY: number
@@ -116,6 +124,110 @@ interface RubberBandRect {
 }
 
 // ---------------------------------------------------------------------------
+// applyAction — pure function, handles both undo and redo symmetrically.
+// Returns the new stamps array and the inverse action (to push to the other stack).
+// ---------------------------------------------------------------------------
+
+function applyAction(
+  action: UndoAction,
+  stamps: Stamp[],
+): { nextStamps: Stamp[]; inverseAction: UndoAction } {
+  switch (action.type) {
+    case "add": {
+      // Undo a placement: remove the added stamps by ID.
+      // Capture their current indices first so the inverse can re-insert them.
+      const entries = action.stamps
+        .map(s => ({ stamp: s, index: stamps.findIndex(st => st.id === s.id) }))
+        .filter(e => e.index !== -1)
+      const ids = new Set(action.stamps.map(s => s.id))
+      return {
+        nextStamps: stamps.filter(s => !ids.has(s.id)),
+        inverseAction: { type: "remove", entries },
+      }
+    }
+    case "remove": {
+      // Undo a deletion: re-insert stamps at their original indices.
+      // Insert in ascending index order so earlier insertions don't shift later ones.
+      const next = [...stamps]
+      const sorted = [...action.entries].sort((a, b) => a.index - b.index)
+      sorted.forEach(({ stamp, index }) =>
+        next.splice(Math.min(index, next.length), 0, stamp)
+      )
+      return {
+        nextStamps: next,
+        inverseAction: { type: "add", stamps: action.entries.map(e => e.stamp) },
+      }
+    }
+    case "move": {
+      // Capture current positions (becomes the inverse), then restore stored positions.
+      const map = new Map(action.moves.map(m => [m.id, m]))
+      const captured: UndoAction & { type: "move" } = {
+        type: "move",
+        moves: action.moves.map(m => {
+          const s = stamps.find(st => st.id === m.id)
+          return { id: m.id, x: s?.x ?? m.x, y: s?.y ?? m.y }
+        }),
+      }
+      return {
+        nextStamps: stamps.map(s => {
+          const m = map.get(s.id)
+          return m ? { ...s, x: m.x, y: m.y } : s
+        }),
+        inverseAction: captured,
+      }
+    }
+    case "rotate": {
+      const map = new Map(action.rots.map(r => [r.id, r]))
+      const captured: UndoAction & { type: "rotate" } = {
+        type: "rotate",
+        rots: action.rots.map(r => {
+          const s = stamps.find(st => st.id === r.id)
+          return { id: r.id, rotation: s?.rotation ?? r.rotation }
+        }),
+      }
+      return {
+        nextStamps: stamps.map(s => {
+          const r = map.get(s.id)
+          return r ? { ...s, rotation: r.rotation } : s
+        }),
+        inverseAction: captured,
+      }
+    }
+    case "recolor": {
+      const map = new Map(action.colors.map(c => [c.id, c]))
+      const captured: UndoAction & { type: "recolor" } = {
+        type: "recolor",
+        colors: action.colors.map(c => {
+          const s = stamps.find(st => st.id === c.id)
+          return { id: c.id, color: s?.color ?? c.color, opacity: s?.opacity ?? c.opacity }
+        }),
+      }
+      return {
+        nextStamps: stamps.map(s => {
+          const c = map.get(s.id)
+          return c ? { ...s, color: c.color, opacity: c.opacity } : s
+        }),
+        inverseAction: captured,
+      }
+    }
+    case "reorder": {
+      // Capture current order, then restore the stored order.
+      const currentOrder = stamps.map(s => s.id)
+      const posMap = new Map(action.order.map((id, i) => [id, i]))
+      const next = [...stamps].sort((a, b) => {
+        const ai = posMap.get(a.id) ?? stamps.length
+        const bi = posMap.get(b.id) ?? stamps.length
+        return ai - bi
+      })
+      return {
+        nextStamps: next,
+        inverseAction: { type: "reorder", order: currentOrder },
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // StampCanvas
 // ---------------------------------------------------------------------------
 
@@ -133,8 +245,8 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   // ── State ─────────────────────────────────────────────────────────────────
 
   const [stamps, setStamps]               = useState<Stamp[]>([])
-  const [past, setPast]                   = useState<Stamp[][]>([])
-  const [future, setFuture]               = useState<Stamp[][]>([])
+  const [past, setPast]                   = useState<UndoAction[]>([])
+  const [future, setFuture]               = useState<UndoAction[]>([])
   const [ghostPos, setGhostPos]           = useState<{ x: number; y: number } | null>(null)
   const [ghostRotation, setGhostRotation] = useState(0)
   const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
@@ -154,13 +266,15 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
   // ── Interaction refs ──────────────────────────────────────────────────────
 
-  const containerRef       = useRef<HTMLDivElement>(null)
-  const dragRef            = useRef<DragState | null>(null)
-  const rubberBandRef      = useRef<RubberBandStart | null>(null)
-  const rubberBandRectRef  = useRef<RubberBandRect | null>(null)
-  const clipboardRef       = useRef<Stamp[]>([])
-  const rafRef             = useRef<number | null>(null)
-  const recolorSnapshotRef = useRef<Stamp[] | null>(null)
+  const containerRef      = useRef<HTMLDivElement>(null)
+  const dragRef           = useRef<DragState | null>(null)
+  const rubberBandRef     = useRef<RubberBandStart | null>(null)
+  const rubberBandRectRef = useRef<RubberBandRect | null>(null)
+  const clipboardRef      = useRef<Stamp[]>([])
+  const rafRef            = useRef<number | null>(null)
+  // True while a color-picker drag session is in progress for the current selection.
+  // Prevents pushing multiple undo entries for a single color-picker session.
+  const recolorActiveRef  = useRef(false)
 
   // Mirror refs
   const stampsRef          = useRef(stamps)
@@ -379,9 +493,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     return () => document.removeEventListener("mousedown", onDown)
   }, [contextMenu])
 
-  // ── Reset recolor session when selection changes ───────────────────────────
+  // ── End recolor session when selection changes ─────────────────────────────
 
-  useEffect(() => { recolorSnapshotRef.current = null }, [selectedIds])
+  useEffect(() => { recolorActiveRef.current = false }, [selectedIds])
 
   // ── Live recolor selected tiles; one undo entry per color-picker session ───
 
@@ -389,9 +503,13 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (activeToolRef.current !== "select") return
     const sel = selectedIdsRef.current
     if (sel.size === 0) return
-    if (recolorSnapshotRef.current === null) {
-      recolorSnapshotRef.current = stampsRef.current
-      setPast((p) => [...p.slice(-49), stampsRef.current])
+    if (!recolorActiveRef.current) {
+      // First change in this session: record before-colors and push undo entry.
+      const colors = stampsRef.current
+        .filter(s => sel.has(s.id))
+        .map(s => ({ id: s.id, color: s.color, opacity: s.opacity }))
+      recolorActiveRef.current = true
+      setPast((p) => [...p.slice(-49), { type: "recolor", colors }])
       setFuture([])
     }
     setStamps((prev) => prev.map((s) =>
@@ -419,18 +537,24 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       e.preventDefault()
       const p = pastRef.current
       if (!p.length) return
+      const action = p[p.length - 1]
+      const { nextStamps, inverseAction } = applyAction(action, curStamps)
+      recolorActiveRef.current = false
       setPast((prev) => prev.slice(0, -1))
-      setFuture((f) => [curStamps, ...f])
-      setStamps(p[p.length - 1])
+      setFuture((f) => [inverseAction, ...f.slice(0, 49)])
+      setStamps(nextStamps)
       return
     }
     if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
       e.preventDefault()
       const f = futureRef.current
       if (!f.length) return
-      setPast((p) => [...p.slice(-49), curStamps])
+      const action = f[0]
+      const { nextStamps, inverseAction } = applyAction(action, curStamps)
+      recolorActiveRef.current = false
+      setPast((p) => [...p.slice(-49), inverseAction])
       setFuture((prev) => prev.slice(1))
-      setStamps(f[0])
+      setStamps(nextStamps)
       return
     }
     if ((e.metaKey || e.ctrlKey) && e.key === "c") {
@@ -448,7 +572,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         x: s.x + SNAP,
         y: s.y + SNAP,
       }))
-      setPast((p) => [...p.slice(-49), curStamps]); setFuture([])
+      recolorActiveRef.current = false
+      setPast((p) => [...p.slice(-49), { type: "add", stamps: newStamps }])
+      setFuture([])
       setStamps((prev) => [...prev, ...newStamps])
       setSelectedIds(new Set(newStamps.map((s) => s.id)))
       return
@@ -459,6 +585,12 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (e.key === "r" || e.key === "R") {
       if (tool === "shapes") { setGhostRotation((prev) => (prev + 90) % 360); return }
       if (tool === "select" && sel.size > 0) {
+        const rots = curStamps
+          .filter(s => sel.has(s.id))
+          .map(s => ({ id: s.id, rotation: s.rotation }))
+        recolorActiveRef.current = false
+        setPast((p) => [...p.slice(-49), { type: "rotate", rots }])
+        setFuture([])
         setStamps((prev) => prev.map((s) => sel.has(s.id) ? { ...s, rotation: (s.rotation + 90) % 360 } : s))
         return
       }
@@ -470,9 +602,15 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (!sel.size) return
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault()
-      recolorSnapshotRef.current = null
-      setPast((p) => [...p.slice(-49), curStamps]); setFuture([])
-      setStamps((prev) => prev.filter((s) => !sel.has(s.id))); setSelectedIds(new Set()); return
+      const entries = curStamps
+        .map((s, i) => ({ stamp: s, index: i }))
+        .filter(({ stamp }) => sel.has(stamp.id))
+      recolorActiveRef.current = false
+      setPast((p) => [...p.slice(-49), { type: "remove", entries }])
+      setFuture([])
+      setStamps((prev) => prev.filter((s) => !sel.has(s.id)))
+      setSelectedIds(new Set())
+      return
     }
     const deltas: Record<string, [number, number]> = {
       ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
@@ -480,6 +618,12 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const d = deltas[e.key]
     if (d) {
       e.preventDefault()
+      const moves = curStamps
+        .filter(s => sel.has(s.id))
+        .map(s => ({ id: s.id, x: s.x, y: s.y }))
+      recolorActiveRef.current = false
+      setPast((p) => [...p.slice(-49), { type: "move", moves }])
+      setFuture([])
       setStamps((prev) => prev.map((s) => sel.has(s.id) ? { ...s, x: s.x + d[0], y: s.y + d[1] } : s))
     }
   }
@@ -494,9 +638,18 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
   const finalizeDrag = useCallback(() => {
     if (!dragRef.current?.moved) return
-    const draggedIds = new Set(dragRef.current.startPositions.keys())
+    const { startPositions } = dragRef.current
+    const isBulk = startPositions.size > 1
+    // Push undo entry using the before-positions captured at drag start.
+    const moves = Array.from(startPositions.entries()).map(([id, { x, y }]) => ({ id, x, y }))
+    recolorActiveRef.current = false
+    setPast((p) => [...p.slice(-49), { type: "move", moves }])
+    setFuture([])
+    // Apply final positions (snap for single tile, exact delta for bulk).
+    const draggedIds = new Set(startPositions.keys())
     setStamps((prev) => prev.map((s) => {
       if (!draggedIds.has(s.id)) return s
+      if (isBulk) return s
       const { x, y } = snapPos(s.x, s.y)
       return { ...s, x, y }
     }))
@@ -515,25 +668,79 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     }).map((s) => s.id)
   }, [])
 
-  // ── Layer order ────────────────────────────────────────────────────────────
+  // ── Layer order (all operate on the full selection) ───────────────────────
 
-  const bringForward = useCallback((id: string) => {
-    recolorSnapshotRef.current = null
-    const current = stampsRef.current
-    const idx = current.findIndex((s) => s.id === id)
-    if (idx === -1 || idx === current.length - 1) return
-    const next = [...current];[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-    setPast((p) => [...p.slice(-49), current]); setFuture([]); setStamps(next)
+  const pushReorder = useCallback((order: string[], next: Stamp[]) => {
+    recolorActiveRef.current = false
+    setPast((p) => [...p.slice(-49), { type: "reorder", order }])
+    setFuture([])
+    setStamps(next)
   }, [])
 
-  const sendBack = useCallback((id: string) => {
-    recolorSnapshotRef.current = null
+  const bringToFront = useCallback(() => {
+    const ids = selectedIdsRef.current
     const current = stampsRef.current
-    const idx = current.findIndex((s) => s.id === id)
-    if (idx <= 0) return
-    const next = [...current];[next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]
-    setPast((p) => [...p.slice(-49), current]); setFuture([]); setStamps(next)
-  }, [])
+    const nonSel = current.filter(s => !ids.has(s.id))
+    const sel     = current.filter(s =>  ids.has(s.id))
+    if (sel.length === 0) return
+    const next = [...nonSel, ...sel]
+    if (next.every((s, i) => s === current[i])) return
+    pushReorder(current.map(s => s.id), next)
+  }, [pushReorder])
+
+  const bringForward = useCallback(() => {
+    const ids = selectedIdsRef.current
+    const current = stampsRef.current
+    if (ids.size === 0) return
+    const next = [...current]
+    // Process selected indices from highest to lowest so earlier swaps
+    // at high indices don't shift the positions of lower-indexed stamps.
+    const selIndices = next
+      .map((s, i) => (ids.has(s.id) ? i : -1))
+      .filter(i => i !== -1)
+      .reverse()
+    let changed = false
+    for (const i of selIndices) {
+      if (i < next.length - 1 && !ids.has(next[i + 1].id)) {
+        ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
+        changed = true
+      }
+    }
+    if (!changed) return
+    pushReorder(current.map(s => s.id), next)
+  }, [pushReorder])
+
+  const sendBack = useCallback(() => {
+    const ids = selectedIdsRef.current
+    const current = stampsRef.current
+    if (ids.size === 0) return
+    const next = [...current]
+    // Process selected indices from lowest to highest so earlier swaps
+    // at low indices don't shift the positions of higher-indexed stamps.
+    const selIndices = next
+      .map((s, i) => (ids.has(s.id) ? i : -1))
+      .filter(i => i !== -1)
+    let changed = false
+    for (const i of selIndices) {
+      if (i > 0 && !ids.has(next[i - 1].id)) {
+        ;[next[i], next[i - 1]] = [next[i - 1], next[i]]
+        changed = true
+      }
+    }
+    if (!changed) return
+    pushReorder(current.map(s => s.id), next)
+  }, [pushReorder])
+
+  const sendToBack = useCallback(() => {
+    const ids = selectedIdsRef.current
+    const current = stampsRef.current
+    const nonSel = current.filter(s => !ids.has(s.id))
+    const sel     = current.filter(s =>  ids.has(s.id))
+    if (sel.length === 0) return
+    const next = [...sel, ...nonSel]
+    if (next.every((s, i) => s === current[i])) return
+    pushReorder(current.map(s => s.id), next)
+  }, [pushReorder])
 
   // ── Event handlers ─────────────────────────────────────────────────────────
 
@@ -581,7 +788,7 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       const startPositions = new Map<string, { x: number; y: number }>()
       for (const id of dragSet) {
         const s = currentStamps.find((st) => st.id === id)
-        if (s) startPositions.set(id, snapPos(s.x, s.y))
+        if (s) startPositions.set(id, { x: s.x, y: s.y })
       }
       dragRef.current = { startMouseX: e.clientX, startMouseY: e.clientY, startPositions, moved: false }
       e.preventDefault()
@@ -667,14 +874,15 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
     const pos = snapPos(e.clientX - rect.left, e.clientY - rect.top)
-    recolorSnapshotRef.current = null
-    const current = stampsRef.current
-    setPast((p) => [...p.slice(-49), current]); setFuture([])
-    setStamps((prev) => [...prev, {
+    const newStamp: Stamp = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       shapeId: selectedShapeIdRef.current, color: inkColorRef.current, opacity: inkOpacityRef.current,
       x: pos.x, y: pos.y, rotation: ghostRotationRef.current,
-    }])
+    }
+    recolorActiveRef.current = false
+    setPast((p) => [...p.slice(-49), { type: "add", stamps: [newStamp] }])
+    setFuture([])
+    setStamps((prev) => [...prev, newStamp])
   }, [])
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -683,6 +891,11 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (!rect) return
     const stampId = stampAtPoint(e.clientX - rect.left, e.clientY - rect.top, stampsRef.current)
     if (!stampId) return
+    const before = stampsRef.current.find(s => s.id === stampId)
+    if (!before) return
+    recolorActiveRef.current = false
+    setPast((p) => [...p.slice(-49), { type: "rotate", rots: [{ id: stampId, rotation: before.rotation }] }])
+    setFuture([])
     setSelectedIds(new Set([stampId]))
     setStamps((prev) => prev.map((s) => s.id === stampId ? { ...s, rotation: (s.rotation + 90) % 360 } : s))
   }, [])
@@ -700,9 +913,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // For the context menu, canForward/canBack reflect whether the ENTIRE selection
+  // can move — i.e., whether the topmost or bottommost selected stamp has room.
+  const ctxSelIndices = contextMenu
+    ? stamps.map((s, i) => selectedIds.has(s.id) ? i : -1).filter(i => i !== -1)
+    : []
   const ctxIdx        = contextMenu ? stamps.findIndex((s) => s.id === contextMenu.stampId) : -1
-  const ctxCanForward = ctxIdx !== -1 && ctxIdx < stamps.length - 1
-  const ctxCanBack    = ctxIdx > 0
+  const ctxCanForward = ctxSelIndices.length > 0 && ctxSelIndices[ctxSelIndices.length - 1] < stamps.length - 1
+  const ctxCanBack    = ctxSelIndices.length > 0 && ctxSelIndices[0] > 0
   const containerStyle = useMemo<React.CSSProperties>(
     () => ({ cursor: activeTool === "shapes" ? "crosshair" : "default" }),
     [activeTool]
@@ -729,15 +947,24 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         <StampContextMenu
           x={contextMenu.x} y={contextMenu.y}
           canForward={ctxCanForward} canBack={ctxCanBack}
-          onBringForward={() => bringForward(contextMenu.stampId)}
-          onSendBack={() => sendBack(contextMenu.stampId)}
+          onBringToFront={bringToFront}
+          onBringForward={bringForward}
+          onSendBack={sendBack}
+          onSendToBack={sendToBack}
           onDelete={() => {
-            recolorSnapshotRef.current = null
-            const toDelete = selectedIdsRef.current.size > 0 ? selectedIdsRef.current : new Set([contextMenu.stampId])
+            const toDelete = selectedIdsRef.current.size > 0
+              ? selectedIdsRef.current
+              : new Set([contextMenu.stampId])
             const current = stampsRef.current
-            setPast((p) => [...p.slice(-49), current]); setFuture([])
+            const entries = current
+              .map((s, i) => ({ stamp: s, index: i }))
+              .filter(({ stamp }) => toDelete.has(stamp.id))
+            recolorActiveRef.current = false
+            setPast((p) => [...p.slice(-49), { type: "remove", entries }])
+            setFuture([])
             setStamps((prev) => prev.filter((s) => !toDelete.has(s.id)))
-            setSelectedIds(new Set()); setContextMenu(null)
+            setSelectedIds(new Set())
+            setContextMenu(null)
           }}
         />
       )}
