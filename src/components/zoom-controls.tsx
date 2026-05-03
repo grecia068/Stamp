@@ -36,7 +36,7 @@ export function ZoomControls({ zoom, onZoomIn, onZoomOut, onZoomTo }: ZoomContro
 
   return (
     <div
-      className="absolute bottom-6 left-6 flex items-center gap-2 bg-white border border-zinc-200 rounded-lg"
+      className="absolute bottom-6 left-6 flex items-center gap-2 bg-background border border-border rounded-lg"
       style={{
         padding: 8,
         boxShadow: "0px 4px 6px -1px rgba(0,0,0,0.1), 0px 2px 4px -1px rgba(0,0,0,0.06)",
@@ -45,12 +45,12 @@ export function ZoomControls({ zoom, onZoomIn, onZoomOut, onZoomTo }: ZoomContro
       onClick={(e) => e.stopPropagation()}
     >
       <button
-        className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-zinc-100 transition-colors shrink-0"
+        className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-muted transition-colors shrink-0"
         onClick={onZoomIn}
       >
-        <ZoomIn size={16} color="#18181b" />
+        <ZoomIn size={16} style={{ color: "var(--foreground)" }} />
       </button>
-      <div className="w-px h-5 bg-zinc-200 shrink-0" />
+      <div className="w-px h-5 bg-border shrink-0" />
 
       {editing ? (
         <input
@@ -62,12 +62,12 @@ export function ZoomControls({ zoom, onZoomIn, onZoomOut, onZoomTo }: ZoomContro
             if (e.key === "Enter") { e.preventDefault(); commit() }
             if (e.key === "Escape") { e.preventDefault(); cancel() }
           }}
-          className="h-8 rounded-md text-sm text-black text-center border border-zinc-300 focus:outline-none focus:border-zinc-400"
+          className="h-8 rounded-md text-sm text-foreground text-center border border-input focus:outline-none focus:border-ring"
           style={{ width: 53, fontFamily: "'DM Mono', monospace", padding: "0 4px" }}
         />
       ) : (
         <button
-          className="flex items-center justify-center h-8 rounded-md hover:bg-zinc-100 transition-colors text-sm text-black whitespace-nowrap"
+          className="flex items-center justify-center h-8 rounded-md hover:bg-muted transition-colors text-sm text-foreground whitespace-nowrap"
           style={{ minWidth: 53, fontFamily: "'DM Mono', monospace", padding: "0 8px" }}
           onClick={startEditing}
         >
@@ -75,12 +75,12 @@ export function ZoomControls({ zoom, onZoomIn, onZoomOut, onZoomTo }: ZoomContro
         </button>
       )}
 
-      <div className="w-px h-5 bg-zinc-200 shrink-0" />
+      <div className="w-px h-5 bg-border shrink-0" />
       <button
-        className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-zinc-100 transition-colors shrink-0"
+        className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-muted transition-colors shrink-0"
         onClick={onZoomOut}
       >
-        <ZoomOut size={16} color="#18181b" />
+        <ZoomOut size={16} style={{ color: "var(--foreground)" }} />
       </button>
     </div>
   )

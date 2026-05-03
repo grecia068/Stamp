@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { useTheme } from "@/lib/theme"
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Toolbar } from "@/components/toolbar"
 import { StampCanvas } from "@/components/stamp-canvas"
@@ -16,6 +17,9 @@ function isTyping(e: KeyboardEvent) {
 }
 
 function App() {
+  // Apply and persist dark/light mode across the whole app
+  useTheme()
+
   // ── Screen / piece state ──────────────────────────────────────────────────
   const [screen, setScreen] = useState<"home" | "canvas">("home")
   const [pieces, setPieces] = useState<SavedPiece[]>(() => loadPieces())
@@ -255,7 +259,7 @@ function App() {
 
   return (
     <TooltipProvider delay={300}>
-      <div className="h-screen w-screen bg-white relative overflow-hidden">
+      <div className="h-screen w-screen bg-background relative overflow-hidden">
         {/* Stamp canvas */}
         <StampCanvas
           activeTool={activeTool}

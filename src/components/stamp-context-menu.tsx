@@ -6,7 +6,7 @@ import type { LucideIcon } from "lucide-react"
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MENU_FONT  = { fontFamily: "'DM Mono', monospace" }
-const BTN_BASE   = "flex items-center gap-2 w-full px-3 py-1.5 text-[13px] text-left text-zinc-800 rounded transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-300"
+const BTN_BASE     = "flex items-center gap-2 w-full px-3 py-1.5 text-[13px] text-left text-foreground rounded transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
 const BTN_DISABLED = "opacity-40 cursor-default pointer-events-none"
 
 function stopAll(e: React.MouseEvent) {
@@ -54,8 +54,8 @@ export function StampContextMenu({
         position: "fixed",
         left: x,
         top: y,
-        background: "#ffffff",
-        border: "1px solid #e4e4e7",
+        background: "var(--background)",
+        border: "1px solid var(--border)",
         borderRadius: 8,
         boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
         paddingTop: 4,
@@ -77,7 +77,7 @@ export function StampContextMenu({
         </button>
       ))}
 
-      <div className="h-px bg-zinc-200 my-1" />
+      <div className="h-px bg-border my-1" />
 
       <button
         onClick={(e) => { e.stopPropagation(); onDelete() }}

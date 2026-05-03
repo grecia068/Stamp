@@ -24,7 +24,7 @@ export function ShapePicker({ selectedShapeId, inkColor, onSelectShape }: ShapeP
                 className={cn(
                   "w-14 h-14 rounded-lg flex items-center justify-center transition-colors cursor-pointer border border-foreground/10",
                   isSelected
-                    ? "bg-blue-50 ring-2 ring-blue-400"
+                    ? "bg-blue-50 ring-2 ring-blue-400 dark:bg-blue-950/30 dark:ring-blue-500"
                     : "bg-muted hover:bg-foreground/5"
                 )}
                 onClick={() => onSelectShape(shape.id)}

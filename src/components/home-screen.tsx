@@ -2,6 +2,7 @@ import { useState } from "react"
 import type { CSSProperties } from "react"
 import { Plus, Trash2, X } from "lucide-react"
 import type { SavedPiece } from "@/lib/storage"
+import { ThemeSwitcher } from "./theme-switcher"
 
 // ── Layout constants (from Figma) ─────────────────────────────────────────────
 
@@ -28,11 +29,11 @@ type RowItem = { type: "new" } | { type: "piece"; piece: SavedPiece }
 // ── HomeScreen ─────────────────────────────────────────────────────────────────
 
 export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: HomeScreenProps) {
-  const [hoveredCard,    setHoveredCard]    = useState<{ row: number; card: number } | null>(null)
+  const [hoveredCard,     setHoveredCard]     = useState<{ row: number; card: number } | null>(null)
   const [hoveredDeleteId, setHoveredDeleteId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [deletingId,     setDeletingId]     = useState<string | null>(null)
-  const [openingId,      setOpeningId]      = useState<string | null>(null)
+  const [deletingId,      setDeletingId]      = useState<string | null>(null)
+  const [openingId,       setOpeningId]       = useState<string | null>(null)
 
   // Build rows: first item in row 0 is always the "New piece" button
   const allItems: RowItem[] = [
@@ -44,7 +45,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
     rows.push(allItems.slice(i, i + ROW_SIZE))
   }
 
-  // ── Dynamic card style (hover fan-out, delete, open) ──────────────────────
+  // ── Dynamic card style ────────────────────────────────────────────────────
 
   function getCardDynStyle(rowIdx: number, cardIdx: number, pieceId?: string): CSSProperties {
     if (pieceId && deletingId === pieceId) {
@@ -91,11 +92,15 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: "100vh", width: "100vw", background: "#ffffff", overflowX: "hidden", overflowY: "auto" }}>
-      <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 24 }}>
+    <div style={{ minHeight: "100vh", width: "100vw", background: "var(--background)", overflowX: "hidden", overflowY: "auto" }}>
+      {/* Logo — fixed top left */}
+      <img
+        src="/assets/Logo.svg"
+        alt="TilePress"
+        style={{ position: "fixed", top: 24, left: 24, height: 37, width: "auto", zIndex: 50, pointerEvents: "none" }}
+      />
 
-        {/* Logo */}
-        <img src="/assets/Logo.svg" alt="TilePress" style={{ height: 37, width: "auto", display: "block" }} />
+      <div style={{ padding: 24, paddingTop: 85, display: "flex", flexDirection: "column", gap: 24 }}>
 
         {/* Stacked rows */}
         {rows.map((row, rowIdx) => (
@@ -104,8 +109,8 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
             style={{ display: "flex", isolation: "isolate", alignItems: "center", paddingRight: OVERLAP }}
           >
             {row.map((item, cardIdx) => {
-              const zBase       = row.length - cardIdx
-              const isThisCard  = hoveredCard?.row === rowIdx && hoveredCard?.card === cardIdx
+              const zBase      = row.length - cardIdx
+              const isThisCard = hoveredCard?.row === rowIdx && hoveredCard?.card === cardIdx
 
               if (item.type === "new") {
                 const dynStyle = getCardDynStyle(rowIdx, cardIdx)
@@ -118,7 +123,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                     style={{
                       width: CARD_W, height: CARD_H, flexShrink: 0,
                       marginRight: -OVERLAP, borderRadius: 8,
-                      border: "1px solid #e4e4e7", background: "#ffffff",
+                      border: "1px solid var(--border)", background: "var(--background)",
                       boxShadow: SHADOW_MD, zIndex: zBase,
                       position: "relative", display: "flex",
                       alignItems: "center", justifyContent: "center",
@@ -127,7 +132,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                       ...dynStyle,
                     }}
                   >
-                    <Plus size={24} color="#71717a" />
+                    <Plus size={24} style={{ color: "var(--muted-foreground)" }} />
                   </button>
                 )
               }
@@ -148,7 +153,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                   style={{
                     width: CARD_W, height: CARD_H, flexShrink: 0,
                     marginRight: -OVERLAP, borderRadius: 8,
-                    border: "1px solid #e4e4e7", background: "#f4f4f5",
+                    border: "1px solid var(--border)", background: "var(--muted)",
                     boxShadow: SHADOW_MD, zIndex: zBase,
                     position: "relative", overflow: "hidden",
                     cursor: "pointer", ...dynStyle,
@@ -173,7 +178,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                   <div
                     style={{
                       position: "absolute", inset: 0, borderRadius: 8,
-                      background: "linear-gradient(to top, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)",
+                      background: "var(--card-overlay-gradient)",
                       display: "flex", alignItems: "flex-end",
                       justifyContent: "space-between", padding: 16,
                       opacity: isThisCard ? 1 : 0,
@@ -184,7 +189,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
                       <span style={{
                         fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 500,
-                        color: "#09090b", lineHeight: "20px",
+                        color: "var(--foreground)", lineHeight: "20px",
                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         maxWidth: 220,
                       }}>
@@ -192,7 +197,7 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                       </span>
                       <span style={{
                         fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 400,
-                        color: "#71717a", lineHeight: "20px",
+                        color: "var(--muted-foreground)", lineHeight: "20px",
                       }}>
                         {date}
                       </span>
@@ -206,14 +211,14 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
                       style={{
                         width: 32, height: 32, flexShrink: 0,
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        background: hoveredDeleteId === piece.id ? "#f4f4f5" : "transparent",
+                        background: hoveredDeleteId === piece.id ? "var(--muted)" : "transparent",
                         border: "none", borderRadius: 8,
                         cursor: "pointer", padding: 8,
                         transform: hoveredDeleteId === piece.id ? "scale(1.05)" : "scale(1)",
                         transition: "background 100ms ease-out, transform 100ms ease-out",
                       }}
                     >
-                      <Trash2 size={16} color="#71717a" />
+                      <Trash2 size={16} style={{ color: "var(--muted-foreground)" }} />
                     </button>
                   </div>
                 </div>
@@ -222,6 +227,9 @@ export function HomeScreen({ pieces, onNewPiece, onOpenPiece, onDeletePiece }: H
           </div>
         ))}
       </div>
+
+      {/* Theme switcher — fixed top right */}
+      <ThemeSwitcher />
 
       {/* Delete confirmation dialog */}
       {confirmDeleteId && (
@@ -241,7 +249,7 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
     <div
       style={{
         position: "fixed", inset: 0,
-        background: "rgba(0,0,0,0.3)",
+        background: "rgba(0,0,0,0.4)",
         display: "flex", alignItems: "center", justifyContent: "center",
         zIndex: 9999,
       }}
@@ -249,9 +257,9 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
     >
       <div
         style={{
-          width: 451, background: "#ffffff",
-          borderRadius: 8, border: "1px solid #e4e4e7",
-          boxShadow: "0px 10px 15px rgba(0,0,0,0.1), 0px 4px 6px rgba(16,24,40,0.1)",
+          width: 451, background: "var(--background)",
+          borderRadius: 8, border: "1px solid var(--border)",
+          boxShadow: "0px 10px 15px rgba(0,0,0,0.15), 0px 4px 6px rgba(0,0,0,0.1)",
           padding: 24, position: "relative",
           display: "flex", flexDirection: "column", gap: 16,
         }}
@@ -265,7 +273,7 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
             width: 24, height: 24, padding: 2,
             display: "flex", alignItems: "center", justifyContent: "center",
             background: "transparent", border: "none",
-            cursor: "pointer", color: "#71717a",
+            cursor: "pointer", color: "var(--muted-foreground)",
           }}
         >
           <X size={16} />
@@ -275,7 +283,7 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <p style={{
             margin: 0, fontSize: 18, fontWeight: 600,
-            color: "#09090b", lineHeight: "28px",
+            color: "var(--foreground)", lineHeight: "28px",
             fontFamily: "'DM Mono', monospace",
           }}>
             Delete this piece?
@@ -283,7 +291,7 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
           <p style={{
             margin: 0, fontFamily: "'DM Mono', monospace",
             fontSize: 14, fontWeight: 400,
-            color: "#71717a", lineHeight: "20px",
+            color: "var(--muted-foreground)", lineHeight: "20px",
           }}>
             It will be gone forever. Like, actually forever
           </p>
@@ -295,10 +303,10 @@ function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
             onClick={onCancel}
             style={{
               height: 32, padding: "0 16px",
-              background: "transparent", border: "1px solid #e4e4e7",
+              background: "transparent", border: "1px solid var(--border)",
               borderRadius: 8, fontFamily: "'DM Mono', monospace",
               fontSize: 14, fontWeight: 500,
-              color: "#09090b", cursor: "pointer",
+              color: "var(--foreground)", cursor: "pointer",
             }}
           >
             Cancel

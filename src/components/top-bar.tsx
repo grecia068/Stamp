@@ -36,12 +36,12 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
 
   return (
     <>
-      {/* Left pill: Home | separator | title | save */}
+      {/* Left pill: Home | separator | title */}
       <div
         className="absolute top-6 left-6 flex items-center gap-2"
         style={{
-          background: "#ffffff",
-          border: "1px solid #e4e4e7",
+          background: "var(--background)",
+          border: "1px solid var(--border)",
           borderRadius: 8,
           padding: "8px 16px 8px 8px",
           boxShadow: "0px 4px 6px rgba(0,0,0,0.1), 0px 2px 4px rgba(0,0,0,0.06)",
@@ -56,9 +56,9 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
                   width: 32, height: 32,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   background: "transparent", border: "none", borderRadius: 6,
-                  cursor: "pointer", color: "#18181b", flexShrink: 0,
+                  cursor: "pointer", color: "var(--foreground)", flexShrink: 0,
                 }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#f4f4f5" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--muted)" }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent" }}
               />
             }
@@ -68,7 +68,7 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
           <TooltipContent side="bottom" className="text-xs">Home</TooltipContent>
         </Tooltip>
 
-        <div style={{ width: 1, height: 20, background: "#e4e4e7", flexShrink: 0 }} />
+        <div style={{ width: 1, height: 20, background: "var(--border)", flexShrink: 0 }} />
 
         {editing ? (
           <input
@@ -85,7 +85,7 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
               fontSize: 14,
               fontWeight: 500,
               lineHeight: "20px",
-              color: "#09090b",
+              color: "var(--foreground)",
               background: "transparent",
               border: "none",
               outline: "none",
@@ -102,7 +102,7 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
               fontSize: 14,
               fontWeight: 500,
               lineHeight: "20px",
-              color: "#09090b",
+              color: "var(--foreground)",
               whiteSpace: "nowrap",
               cursor: "text",
               userSelect: "none",
@@ -114,7 +114,7 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
 
       </div>
 
-      {/* Right: download button */}
+      {/* Right: export button */}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -124,15 +124,15 @@ export function TopBar({ title, onTitleChange, onHome, onExport }: TopBarProps) 
               style={{
                 width: 32, height: 32,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                background: "#ffffff",
-                border: "1px solid #e4e4e7",
+                background: "var(--background)",
+                border: "1px solid var(--border)",
                 borderRadius: 8,
                 cursor: "pointer",
-                color: "#18181b",
+                color: "var(--foreground)",
                 boxShadow: "0px 1px 2px rgba(0,0,0,0.05)",
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#f4f4f5" }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#ffffff" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--muted)" }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--background)" }}
             />
           }
         >

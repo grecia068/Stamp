@@ -6,32 +6,32 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --color-background: #ffffff;
-  --color-foreground: #09090b;
-  --color-muted: #f4f4f5;
-  --color-muted-foreground: #71717a;
-  --color-border: #e4e4e7;
-  --color-ring: #3b82f6;
-  --color-primary: #18181b;
-  --color-primary-foreground: #fafafa;
-  --color-accent: #f4f4f5;
-  --color-accent-foreground: #18181b;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #09090b;
+  /* Colors via CSS variables — automatically adapt to .dark class */
+  --color-background:           var(--background);
+  --color-foreground:           var(--foreground);
+  --color-muted:                var(--muted);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-border:               var(--border);
+  --color-ring:                 #3b82f6; /* blue focus ring, same in both modes */
+  --color-primary:              var(--primary);
+  --color-primary-foreground:   var(--primary-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-input:                var(--input);
+  --color-destructive:          var(--destructive);
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+
+  --font-sans:    'DM Mono', monospace;
+  --font-heading: var(--font-sans);
+
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
-
-  --font-sans: 'DM Mono', monospace;
-
-  --font-heading: var(--font-sans);
-
-  --color-input: var(--input);
-  --color-destructive: var(--destructive);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
 }
 
 body {
@@ -68,6 +68,7 @@ body {
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
+  --card-overlay-gradient: linear-gradient(to top, oklch(1 0 0) 0%, oklch(1 0 0 / 0) 60%);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -110,6 +111,7 @@ body {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --card-overlay-gradient: linear-gradient(to top, oklch(0.205 0 0) 0%, oklch(0.205 0 0 / 0) 60%);
 }
 
 @layer base {

@@ -292,7 +292,7 @@ export function ColorPicker({
               <button
                 key={i}
                 title={c}
-                className="w-6 h-6 rounded-full border border-foreground/10 cursor-pointer hover:scale-110 hover:ring-2 hover:ring-zinc-400 hover:ring-offset-1 transition-all flex-none"
+                className="w-6 h-6 rounded-full border border-foreground/10 cursor-pointer hover:scale-110 hover:ring-2 hover:ring-foreground/30 hover:ring-offset-1 transition-all flex-none"
                 style={{ backgroundColor: c }}
                 onMouseDown={(e) => {
                   // Handle on mousedown (not click) so the action fires before
