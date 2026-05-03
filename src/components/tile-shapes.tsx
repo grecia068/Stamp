@@ -1,4 +1,4 @@
-import React from "react"
+import type { ReactNode } from "react"
 
 // Stable module-level constants so <image href> is never recomputed
 const T6  = "/assets/Tile6%20new.svg"
@@ -20,7 +20,7 @@ export interface TileShape {
   pxH: number
   textureUrl: string
   viewBox: string
-  render: (color: string) => React.ReactNode
+  render: (color: string) => ReactNode
 }
 
 // Picker order matches Figma layout (4 cols, row by row):

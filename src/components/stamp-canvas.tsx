@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { TILE_SHAPE_MAP, TILE_SHAPES } from "./tile-shapes"
 import type { TileShape } from "./tile-shapes"
 import { StampContextMenu } from "./stamp-context-menu"
+import { ZoomControls } from "./zoom-controls"
 
 // ---------------------------------------------------------------------------
 // Grid constant
@@ -43,6 +44,21 @@ function recolorPixels(data: Uint8ClampedArray, hex: string): void {
 // Geometry helpers
 // ---------------------------------------------------------------------------
 
+interface VisibleBounds { left: number; top: number; right: number; bottom: number }
+interface CtxSetup { ctx: CanvasRenderingContext2D; vis: VisibleBounds }
+
+// Sets the canvas transform, clears it, and returns the context + viewport bounds.
+function setupCtx(canvas: HTMLCanvasElement, z: number, pan: { x: number; y: number }): CtxSetup | null {
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return null
+  const dpr  = window.devicePixelRatio || 1
+  const left = -pan.x / z
+  const top  = -pan.y / z
+  ctx.setTransform(z * dpr, 0, 0, z * dpr, pan.x * dpr, pan.y * dpr)
+  ctx.clearRect(left, top, canvas.width / (z * dpr), canvas.height / (z * dpr))
+  return { ctx, vis: { left, top, right: left + canvas.width / (z * dpr), bottom: top + canvas.height / (z * dpr) } }
+}
+
 function snapPos(x: number, y: number) {
   return { x: Math.round(x / SNAP) * SNAP, y: Math.round(y / SNAP) * SNAP }
 }
@@ -77,7 +93,7 @@ function stampAtPoint(x: number, y: number, stamps: Stamp[]): string | null {
 // Types
 // ---------------------------------------------------------------------------
 
-interface Stamp {
+export interface Stamp {
   id: string
   shapeId: string
   color: string
@@ -85,6 +101,10 @@ interface Stamp {
   x: number
   y: number
   rotation: number // 0 | 90 | 180 | 270
+}
+
+export interface StampCanvasHandle {
+  getStamps: () => Stamp[]
 }
 
 type UndoAction =
@@ -111,8 +131,8 @@ interface ContextMenuState {
 interface RubberBandStart {
   screenX: number
   screenY: number
-  canvasX: number
-  canvasY: number
+  canvasX: number  // world coords
+  canvasY: number  // world coords
   additive: boolean
 }
 
@@ -238,13 +258,16 @@ interface StampCanvasProps {
   inkOpacity: number
   recolorVersion: number
   canvasRef?: React.RefObject<HTMLCanvasElement | null>
+  handleRef?: React.RefObject<StampCanvasHandle | null>
+  initialStamps?: Stamp[]
+  onFirstStamp?: () => void
 }
 
-export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity, recolorVersion, canvasRef }: StampCanvasProps) {
+export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity, recolorVersion, canvasRef, handleRef, initialStamps, onFirstStamp }: StampCanvasProps) {
 
   // ── State ─────────────────────────────────────────────────────────────────
 
-  const [stamps, setStamps]               = useState<Stamp[]>([])
+  const [stamps, setStamps]               = useState<Stamp[]>(initialStamps ?? [])
   const [past, setPast]                   = useState<UndoAction[]>([])
   const [future, setFuture]               = useState<UndoAction[]>([])
   const [ghostPos, setGhostPos]           = useState<{ x: number; y: number } | null>(null)
@@ -253,6 +276,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const [contextMenu, setContextMenu]     = useState<ContextMenuState | null>(null)
   const [rubberBand, setRubberBand]       = useState<RubberBandRect | null>(null)
   const [tilesLoaded, setTilesLoaded]     = useState(false)
+
+  // Zoom/pan state — zoom drives ZoomControls display; pan never needs re-render
+  const [zoom, setZoom]       = useState(1)
+  const [isPanning, setIsPanning] = useState(false)
+  const zoomRef               = useRef(1)
+  const panRef                = useRef({ x: 0, y: 0 })
+  const isPanningRef          = useRef(false)
+  const panDragAnchorRef      = useRef({ mx: 0, my: 0, px: 0, py: 0 })
 
   // ── Canvas refs ────────────────────────────────────────────────────────────
 
@@ -339,14 +370,15 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   redrawMainRef.current = () => {
     const canvas = mainCanvasRef.current
     if (!canvas || canvas.width === 0) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+    const setup = setupCtx(canvas, zoomRef.current, panRef.current)
+    if (!setup) return
+    const { ctx, vis } = setup
+
     for (const stamp of stampsRef.current) {
       const shape = TILE_SHAPE_MAP.get(stamp.shapeId)
       if (!shape) continue
+      if (stamp.x + shape.pxW < vis.left || stamp.x > vis.right ||
+          stamp.y + shape.pxH < vis.top  || stamp.y > vis.bottom) continue
       const colored = getColoredTile(shape, stamp.color)
       if (!colored) continue
       ctx.save()
@@ -367,11 +399,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   redrawOverlayRef.current = () => {
     const canvas = overlayCanvasRef.current
     if (!canvas || canvas.width === 0) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+    const setup = setupCtx(canvas, zoomRef.current, panRef.current)
+    if (!setup) return
+    const { ctx, vis } = setup
 
     // Selection highlights
     const sel = selectedIdsRef.current
@@ -383,6 +413,8 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         if (!sel.has(stamp.id)) continue
         const shape = TILE_SHAPE_MAP.get(stamp.shapeId)
         if (!shape) continue
+        if (stamp.x + shape.pxW < vis.left || stamp.x > vis.right ||
+            stamp.y + shape.pxH < vis.top  || stamp.y > vis.bottom) continue
         ctx.save()
         if (stamp.rotation) {
           const cx = stamp.x + shape.pxW / 2
@@ -422,16 +454,17 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       }
     }
 
-    // Rubber band selection rect
+    // Rubber band selection rect (coords already in world space)
     const rb = rubberBandRectRef.current
     if (rb) {
+      const z = zoomRef.current
       const x = Math.min(rb.x1, rb.x2), y = Math.min(rb.y1, rb.y2)
       const w = Math.abs(rb.x2 - rb.x1),  h = Math.abs(rb.y2 - rb.y1)
       ctx.fillStyle   = "rgba(0,131,246,0.1)"
       ctx.strokeStyle = "#0083F6"
-      ctx.lineWidth   = 1
+      ctx.lineWidth   = 1 / z  // keep 1px stroke regardless of zoom
       ctx.beginPath()
-      ctx.roundRect(x, y, w, h, 6)
+      ctx.roundRect(x, y, w, h, 6 / z)
       ctx.fill()
       ctx.stroke()
     }
@@ -521,6 +554,64 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   // ── Cancel pending rAF on unmount ──────────────────────────────────────────
 
   useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current) }, [])
+
+  // ── Expose handle to parent ────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (handleRef) handleRef.current = { getStamps: () => stampsRef.current }
+  })
+
+  // ── Fire onFirstStamp once when stamps go from 0 → 1+ ─────────────────────
+
+  const firstStampFiredRef = useRef(false)
+  useEffect(() => {
+    if (stamps.length > 0 && !firstStampFiredRef.current) {
+      firstStampFiredRef.current = true
+      onFirstStamp?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stamps.length])
+
+  // ── Wheel handler (passive:false required for preventDefault) ─────────────
+
+  const handleWheelRef = useRef<(e: WheelEvent) => void>(() => {})
+  handleWheelRef.current = (e: WheelEvent) => {
+    e.preventDefault()
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    if (e.ctrlKey || e.metaKey) {
+      // Pinch gesture, Ctrl+scroll, or Cmd+scroll → zoom toward cursor
+      const factor   = e.deltaY < 0 ? 1.04 : 1 / 1.04
+      const newZoom  = Math.max(0.1, Math.min(1.25,zoomRef.current * factor))
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      // Keep the world point under the cursor fixed
+      const wx = (cx - panRef.current.x) / zoomRef.current
+      const wy = (cy - panRef.current.y) / zoomRef.current
+      zoomRef.current = newZoom
+      panRef.current  = { x: cx - wx * newZoom, y: cy - wy * newZoom }
+      setZoom(newZoom)
+      redrawMainRef.current()
+      redrawOverlayRef.current()
+    } else {
+      // Two-finger trackpad drag → pan
+      panRef.current = {
+        x: panRef.current.x - e.deltaX * 0.8,
+        y: panRef.current.y - e.deltaY * 0.8,
+      }
+      redrawMainRef.current()
+      redrawOverlayRef.current()
+    }
+  }
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const handler = (e: WheelEvent) => handleWheelRef.current(e)
+    container.addEventListener("wheel", handler, { passive: false })
+    return () => container.removeEventListener("wheel", handler)
+  }, [])
 
   // ── Keyboard handler ───────────────────────────────────────────────────────
 
@@ -742,16 +833,61 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     pushReorder(current.map(s => s.id), next)
   }, [pushReorder])
 
+  // ── Zoom helpers ──────────────────────────────────────────────────────────
+
+  const zoomToward = useCallback((newZoom: number, cx: number, cy: number) => {
+    const wx = (cx - panRef.current.x) / zoomRef.current
+    const wy = (cy - panRef.current.y) / zoomRef.current
+    zoomRef.current = newZoom
+    panRef.current  = { x: cx - wx * newZoom, y: cy - wy * newZoom }
+    setZoom(newZoom)
+    redrawMainRef.current()
+    redrawOverlayRef.current()
+  }, [])
+
+  const handleZoomIn = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const newZoom = Math.max(0.1, Math.min(1.25,zoomRef.current + 0.25))
+    zoomToward(newZoom, rect.width / 2, rect.height / 2)
+  }, [zoomToward])
+
+  const handleZoomOut = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const newZoom = Math.max(0.1, Math.min(1.25,zoomRef.current - 0.25))
+    zoomToward(newZoom, rect.width / 2, rect.height / 2)
+  }, [zoomToward])
+
+  const handleZoomTo = useCallback((newZoom: number) => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    zoomToward(newZoom, rect.width / 2, rect.height / 2)
+  }, [zoomToward])
+
   // ── Event handlers ─────────────────────────────────────────────────────────
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Middle mouse button → pan (works in all tools)
+    if (e.button === 1) {
+      e.preventDefault()
+      isPanningRef.current = true
+      setIsPanning(true)
+      panDragAnchorRef.current = {
+        mx: e.clientX, my: e.clientY,
+        px: panRef.current.x, py: panRef.current.y,
+      }
+      return
+    }
+
     if (activeToolRef.current !== "select") return
     setContextMenu(null)
 
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
-    const cx = e.clientX - rect.left
-    const cy = e.clientY - rect.top
+    // Convert screen coords to world coords
+    const cx = (e.clientX - rect.left - panRef.current.x) / zoomRef.current
+    const cy = (e.clientY - rect.top  - panRef.current.y) / zoomRef.current
     const currentStamps   = stampsRef.current
     const currentSelected = selectedIdsRef.current
     const stampId = stampAtPoint(cx, cy, currentStamps)
@@ -790,13 +926,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
         const s = currentStamps.find((st) => st.id === id)
         if (s) startPositions.set(id, { x: s.x, y: s.y })
       }
+      // Store screen-space mouse start for delta computation
       dragRef.current = { startMouseX: e.clientX, startMouseY: e.clientY, startPositions, moved: false }
       e.preventDefault()
 
     } else {
       rubberBandRef.current = {
         screenX: e.clientX, screenY: e.clientY,
-        canvasX: cx, canvasY: cy,
+        canvasX: cx, canvasY: cy,  // world coords
         additive: e.shiftKey,
       }
     }
@@ -806,16 +943,33 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     const clientX = e.clientX
     const clientY = e.clientY
 
+    // Middle-mouse pan — handle immediately without rAF
+    if (isPanningRef.current) {
+      if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+      panRef.current = {
+        x: panDragAnchorRef.current.px + clientX - panDragAnchorRef.current.mx,
+        y: panDragAnchorRef.current.py + clientY - panDragAnchorRef.current.my,
+      }
+      redrawMainRef.current()
+      redrawOverlayRef.current()
+      return
+    }
+
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null
 
       if (activeToolRef.current === "select") {
         if (dragRef.current) {
-          const dx = clientX - dragRef.current.startMouseX
-          const dy = clientY - dragRef.current.startMouseY
-          if (!dragRef.current.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) dragRef.current.moved = true
+          // Delta in screen pixels → convert to world pixels
+          const dxScreen = clientX - dragRef.current.startMouseX
+          const dyScreen = clientY - dragRef.current.startMouseY
+          if (!dragRef.current.moved && (Math.abs(dxScreen) > 2 || Math.abs(dyScreen) > 2)) {
+            dragRef.current.moved = true
+          }
           if (dragRef.current.moved) {
+            const dx = dxScreen / zoomRef.current
+            const dy = dyScreen / zoomRef.current
             setStamps((prev) => prev.map((s) => {
               const start = dragRef.current!.startPositions.get(s.id)
               return start ? { ...s, x: start.x + dx, y: start.y + dy } : s
@@ -826,7 +980,10 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
           if (Math.abs(clientX - screenX) > 2 || Math.abs(clientY - screenY) > 2) {
             const rect = containerRef.current?.getBoundingClientRect()
             if (rect) {
-              const newRB = { x1: canvasX, y1: canvasY, x2: clientX - rect.left, y2: clientY - rect.top }
+              // Convert current mouse to world coords
+              const wx = (clientX - rect.left - panRef.current.x) / zoomRef.current
+              const wy = (clientY - rect.top  - panRef.current.y) / zoomRef.current
+              const newRB = { x1: canvasX, y1: canvasY, x2: wx, y2: wy }
               rubberBandRectRef.current = newRB
               setRubberBand(newRB)
             }
@@ -835,12 +992,21 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
       } else {
         const rect = containerRef.current?.getBoundingClientRect()
         if (!rect) return
-        setGhostPos(snapPos(clientX - rect.left, clientY - rect.top))
+        const wx = (clientX - rect.left - panRef.current.x) / zoomRef.current
+        const wy = (clientY - rect.top  - panRef.current.y) / zoomRef.current
+        setGhostPos(snapPos(wx, wy))
       }
     })
   }, [])
 
   const handleMouseUp = useCallback(() => {
+    // End middle-mouse pan
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      setIsPanning(false)
+      return
+    }
+
     finalizeDrag()
     dragRef.current = null
 
@@ -860,6 +1026,11 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   }, [finalizeDrag, getHitStamps])
 
   const handleMouseLeave = useCallback(() => {
+    // Clear pan state if mouse leaves while panning
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      setIsPanning(false)
+    }
     setGhostPos(null)
     finalizeDrag()
     dragRef.current = null
@@ -873,7 +1044,10 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (activeToolRef.current !== "shapes") return
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
-    const pos = snapPos(e.clientX - rect.left, e.clientY - rect.top)
+    // Convert to world coords before snapping
+    const wx  = (e.clientX - rect.left - panRef.current.x) / zoomRef.current
+    const wy  = (e.clientY - rect.top  - panRef.current.y) / zoomRef.current
+    const pos = snapPos(wx, wy)
     const newStamp: Stamp = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       shapeId: selectedShapeIdRef.current, color: inkColorRef.current, opacity: inkOpacityRef.current,
@@ -889,7 +1063,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (activeToolRef.current !== "select") return
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
-    const stampId = stampAtPoint(e.clientX - rect.left, e.clientY - rect.top, stampsRef.current)
+    const wx = (e.clientX - rect.left - panRef.current.x) / zoomRef.current
+    const wy = (e.clientY - rect.top  - panRef.current.y) / zoomRef.current
+    const stampId = stampAtPoint(wx, wy, stampsRef.current)
     if (!stampId) return
     const before = stampsRef.current.find(s => s.id === stampId)
     if (!before) return
@@ -905,7 +1081,9 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
     if (activeToolRef.current !== "select") return
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
-    const stampId = stampAtPoint(e.clientX - rect.left, e.clientY - rect.top, stampsRef.current)
+    const wx = (e.clientX - rect.left - panRef.current.x) / zoomRef.current
+    const wy = (e.clientY - rect.top  - panRef.current.y) / zoomRef.current
+    const stampId = stampAtPoint(wx, wy, stampsRef.current)
     if (!stampId) return
     if (!selectedIdsRef.current.has(stampId)) setSelectedIds(new Set([stampId]))
     setContextMenu({ x: e.clientX, y: e.clientY, stampId })
@@ -922,8 +1100,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
   const ctxCanForward = ctxSelIndices.length > 0 && ctxSelIndices[ctxSelIndices.length - 1] < stamps.length - 1
   const ctxCanBack    = ctxSelIndices.length > 0 && ctxSelIndices[0] > 0
   const containerStyle = useMemo<React.CSSProperties>(
-    () => ({ cursor: activeTool === "shapes" ? "crosshair" : "default" }),
-    [activeTool]
+    () => ({
+      cursor: isPanning
+        ? "grabbing"
+        : activeTool === "shapes"
+        ? "crosshair"
+        : "default",
+    }),
+    [activeTool, isPanning]
   )
 
   return (
@@ -941,6 +1125,14 @@ export function StampCanvas({ activeTool, selectedShapeId, inkColor, inkOpacity,
 
       {/* Overlay canvas — selection highlights, ghost preview, rubber band */}
       <canvas ref={overlayCanvasRef} className="absolute inset-0" style={OVERLAY_STYLE} />
+
+      {/* Zoom controls — bottom left */}
+      <ZoomControls
+        zoom={zoom}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomTo={handleZoomTo}
+      />
 
       {/* Right-click context menu */}
       {contextMenu && ctxIdx !== -1 && (
